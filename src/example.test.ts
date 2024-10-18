@@ -1,22 +1,48 @@
-import { Entity, MikroORM, PrimaryKey, Property } from '@mikro-orm/sqlite';
+import {
+  Collection,
+  Entity,
+  ManyToOne,
+  MikroORM,
+  OneToMany,
+  PrimaryKey,
+  Property,
+} from '@mikro-orm/sqlite';
 
 @Entity()
 class User {
-
   @PrimaryKey()
   id!: number;
+
+  @OneToMany(() => Book, b => b.user)
+  books = new Collection<Book>(this);
 
   @Property()
   name: string;
 
-  @Property({ unique: true })
-  email: string;
-
-  constructor(name: string, email: string) {
+  constructor(name: string) {
     this.name = name;
-    this.email = email;
   }
+}
 
+@Entity()
+class Book {
+  @PrimaryKey()
+  id!: number;
+
+  @ManyToOne(() => User, {
+    name: 'user',
+    nullable: true,
+    deleteRule: 'set null',
+  })
+  user?: User;
+
+  @Property()
+  title: string;
+
+  constructor(title: string, user?: User) {
+    this.title = title;
+    this.user = user;
+  }
 }
 
 let orm: MikroORM;
@@ -35,17 +61,29 @@ afterAll(async () => {
   await orm.close(true);
 });
 
-test('basic CRUD example', async () => {
-  orm.em.create(User, { name: 'Foo', email: 'foo' });
+test('$every must return the user if book title = "title"', async () => {
+  orm.em.create(User, { name: 'Foo' });
   await orm.em.flush();
   orm.em.clear();
 
-  const user = await orm.em.findOneOrFail(User, { email: 'foo' });
-  expect(user.name).toBe('Foo');
-  user.name = 'Bar';
-  orm.em.remove(user);
+  orm.em.create(Book, { title: 'title', user: orm.em.getReference(User, 1) });
   await orm.em.flush();
+  orm.em.clear();
 
-  const count = await orm.em.count(User, { email: 'foo' });
-  expect(count).toBe(0);
+  const user = await orm.em.findOneOrFail(User, {
+    books: { $every: { title: 'title' } },
+  });
+  expect(user.name).toBe('Foo');
+});
+
+test('$every must return null if no book exist with title = "bad title"', async () => {
+  await orm.em.nativeDelete(Book, { title: 'book' });
+  const user = await orm.em.findOne(User, { books: { $every: { title: 'bad title' } } });
+  expect(user).toBe(null);
+});
+
+test('$every must return null if no book exists at all', async () => {
+  await orm.em.nativeDelete(Book, { title: 'title' });
+  const user = await orm.em.findOne(User, { books: { $every: { title: 'title' } } });
+  expect(user).toBe(null);
 });
